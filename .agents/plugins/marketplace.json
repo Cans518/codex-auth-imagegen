@@ -1,0 +1,20 @@
+{
+  "name": "codex-auth-imagegen",
+  "interface": {
+    "displayName": "Codex Auth ImageGen"
+  },
+  "plugins": [
+    {
+      "name": "codex-auth-imagegen",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-auth-imagegen"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Creativity"
+    }
+  ]
+}

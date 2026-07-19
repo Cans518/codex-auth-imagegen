@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Auth ImageGen"
+  short_description: "Run Image Gen with stored Codex credentials"
+  default_prompt: "Use $codex-auth-imagegen to generate an image through my active Codex provider."

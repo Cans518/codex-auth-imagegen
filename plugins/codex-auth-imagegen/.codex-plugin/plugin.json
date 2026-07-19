@@ -1,0 +1,24 @@
+{
+  "name": "codex-auth-imagegen",
+  "version": "1.0.0",
+  "description": "Run the bundled Image Gen CLI with the active Codex provider URL and stored Codex API key, without environment variables.",
+  "author": {
+    "name": "Mzee"
+  },
+  "license": "MIT",
+  "keywords": ["codex", "imagegen", "openai", "plugin", "credentials"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Auth ImageGen",
+    "shortDescription": "Use Codex credentials for Image Gen without environment variables.",
+    "longDescription": "Read the active provider URL from Codex config and the API key from Codex auth storage at call time, then pass both directly to the bundled Image Gen clients in memory.",
+    "developerName": "Mzee",
+    "category": "Creativity",
+    "capabilities": ["Image generation", "Image editing", "Batch generation"],
+    "defaultPrompt": [
+      "Generate an image with my active Codex provider.",
+      "Edit this image through Codex Auth ImageGen.",
+      "Diagnose my Codex Auth ImageGen configuration."
+    ]
+  }
+}
