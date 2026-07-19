@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+- Add a quiet fast path that avoids unnecessary reference, help, diagnosis, and provider probes.
+- Keep adapter credential status silent unless `--verbose-status` is requested.
+- Collapse unexpected execution failures to a safe one-line error unless `--verbose-errors` is
+  requested.
+- Recommend `--prompt-file` for long prompts so live commands stay compact.
+- Keep scratch inputs outside the workspace and require cleanup after both success and failure.
+- Store final images directly under a single `output/` directory unless nesting is explicitly
+  requested.
+
 ## 1.0.0 - 2026-07-19
 
 - Convert the personal skill into a distributable local Marketplace repository.

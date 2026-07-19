@@ -70,6 +70,9 @@ python plugins/codex-auth-imagegen/scripts/codex_config_imagegen.py `
 
 Diagnosis prints provider metadata and key presence only. It never prints the key.
 
+Do not use diagnosis or `--help` as a preflight for routine generation. The normal adapter path is
+quiet and reads the current configuration on every call.
+
 ## Direct CLI use
 
 All unrecognized arguments are forwarded to the bundled Image Gen CLI:
@@ -79,16 +82,34 @@ python plugins/codex-auth-imagegen/scripts/codex_config_imagegen.py generate `
   --prompt "A quiet alpine lake at dawn" `
   --quality high `
   --size 1536x1024 `
-  --out output/imagegen/alpine-lake.png
+  --out output/alpine-lake.png
 ```
 
 Batch generation and editing use the same arguments as the bundled CLI:
 
 ```powershell
 python plugins/codex-auth-imagegen/scripts/codex_config_imagegen.py generate-batch `
-  --input tmp/imagegen/prompts.jsonl `
-  --out-dir output/imagegen/batch
+  --input <system-temp>/codex-imagegen-prompts.jsonl `
+  --out-dir output
 ```
+
+Create batch input files in the operating system's temporary directory and remove the exact files
+in a `finally` block after success or failure. Do not create a workspace `tmp/` directory. Unless a
+project or user explicitly requires nesting, keep all final images directly under `output/` with
+unique semantic filenames.
+
+### Keep Codex output concise
+
+- For normal requests, call the adapter directly without first running `--diagnose`, `--help`, or
+  provider probes.
+- For a long or multiline prompt, use a unique file in the operating system's temporary directory
+  with `--prompt-file`, then delete that file after the call even when the call fails.
+- Adapter credential status is silent by default. Put `--verbose-status` before the Image Gen
+  subcommand only when you need the redacted provider summary.
+- Unexpected execution failures are one-line errors by default. Put `--verbose-errors` before the
+  Image Gen subcommand only when debugging requires a Python traceback.
+- If Codex already reports that network access needs approval, approve the first live generation
+  call instead of making a network probe that is expected to fail.
 
 ## Security boundaries
 

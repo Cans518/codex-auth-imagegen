@@ -9,7 +9,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -82,7 +82,7 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(adapter.AdapterError, "OPENAI_API_KEY"):
             adapter.load_codex_credentials(self.paths)
 
-    def test_patches_clients_with_explicit_arguments_and_redacts_output(self) -> None:
+    def test_patches_clients_with_explicit_arguments_and_is_quiet_by_default(self) -> None:
         calls: list[tuple[str, dict[str, str]]] = []
 
         class FakeOpenAI:
@@ -111,8 +111,20 @@ class AdapterTests(unittest.TestCase):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             imagegen._ensure_api_key(False)
-        self.assertIn("key_source=auth.json (redacted)", stderr.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
         self.assertNotIn("test-secret-value", stderr.getvalue())
+
+    def test_verbose_status_is_redacted(self) -> None:
+        credentials = adapter.load_codex_credentials(self.paths)
+        imagegen = SimpleNamespace()
+        adapter._patch_credential_delivery(imagegen, credentials, verbose_status=True)
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            imagegen._ensure_api_key(False)
+        output = stderr.getvalue()
+        self.assertIn("key_source=auth.json (redacted)", output)
+        self.assertNotIn("test-secret-value", output)
 
     def test_diagnose_is_redacted(self) -> None:
         credentials = adapter.load_codex_credentials(self.paths)
@@ -127,9 +139,19 @@ class AdapterTests(unittest.TestCase):
 
     def test_adapter_options_are_removed_before_forwarding(self) -> None:
         options, forwarded = adapter._parse_adapter_args(
-            ["--codex-home", str(self.codex_home), "generate", "--prompt", "test"]
+            [
+                "--codex-home",
+                str(self.codex_home),
+                "--verbose-status",
+                "--verbose-errors",
+                "generate",
+                "--prompt",
+                "test",
+            ]
         )
         self.assertEqual(options.codex_home, self.codex_home)
+        self.assertTrue(options.verbose_status)
+        self.assertTrue(options.verbose_errors)
         self.assertEqual(forwarded, ["generate", "--prompt", "test"])
 
     def test_diagnose_rejects_forwarded_arguments(self) -> None:
@@ -146,6 +168,56 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("fake-imagegen-main", stdout.getvalue())
         self.assertNotIn("test-secret-value", stdout.getvalue() + stderr.getvalue())
+
+    def test_execution_error_is_concise_by_default(self) -> None:
+        fake_imagegen = SimpleNamespace(main=Mock(side_effect=RuntimeError("details")))
+        with patch.object(adapter, "_load_bundled_imagegen", return_value=fake_imagegen):
+            with self.assertRaisesRegex(
+                adapter.AdapterError,
+                r"Image Gen execution failed \(RuntimeError\)",
+            ) as caught:
+                adapter.run(["--codex-home", str(self.codex_home), "generate", "--prompt", "test"])
+        self.assertNotIn("details", str(caught.exception))
+
+    def test_main_prints_one_safe_error_line_without_traceback(self) -> None:
+        fake_imagegen = SimpleNamespace(main=Mock(side_effect=RuntimeError("details")))
+        stderr = io.StringIO()
+        argv = [
+            str(ADAPTER_PATH),
+            "--codex-home",
+            str(self.codex_home),
+            "generate",
+            "--prompt",
+            "test",
+        ]
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(adapter, "_load_bundled_imagegen", return_value=fake_imagegen),
+            contextlib.redirect_stderr(stderr),
+        ):
+            result = adapter.main()
+
+        lines = stderr.getvalue().splitlines()
+        self.assertEqual(result, 2)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("Image Gen execution failed (RuntimeError)", lines[0])
+        self.assertNotIn("details", lines[0])
+        self.assertNotIn("Traceback", lines[0])
+
+    def test_verbose_errors_preserves_original_exception(self) -> None:
+        fake_imagegen = SimpleNamespace(main=Mock(side_effect=RuntimeError("details")))
+        with patch.object(adapter, "_load_bundled_imagegen", return_value=fake_imagegen):
+            with self.assertRaisesRegex(RuntimeError, "details"):
+                adapter.run(
+                    [
+                        "--codex-home",
+                        str(self.codex_home),
+                        "--verbose-errors",
+                        "generate",
+                        "--prompt",
+                        "test",
+                    ]
+                )
 
     def test_source_has_no_environment_variable_access(self) -> None:
         source = ADAPTER_PATH.read_text(encoding="utf-8")

@@ -56,6 +56,10 @@ def main() -> int:
         fail("SKILL.md frontmatter is missing")
     if "name: codex-auth-imagegen" not in skill_text.split("---", 2)[1]:
         fail("SKILL.md name is invalid")
+    readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
+    for legacy_workspace_path in ("tmp/imagegen/", "output/imagegen/"):
+        if legacy_workspace_path in skill_text or legacy_workspace_path in readme_text:
+            fail(f"Legacy nested workspace path found: {legacy_workspace_path}")
 
     yaml_text = OPENAI_YAML.read_text(encoding="utf-8")
     if "$codex-auth-imagegen" not in yaml_text:

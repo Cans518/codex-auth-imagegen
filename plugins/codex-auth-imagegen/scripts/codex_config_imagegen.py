@@ -117,8 +117,15 @@ def _load_bundled_imagegen(path: Path) -> ModuleType:
     return module
 
 
-def _patch_credential_delivery(imagegen: ModuleType, credentials: CodexCredentials) -> None:
+def _patch_credential_delivery(
+    imagegen: ModuleType,
+    credentials: CodexCredentials,
+    *,
+    verbose_status: bool = False,
+) -> None:
     def ensure_codex_credentials(dry_run: bool) -> None:
+        if not verbose_status:
+            return
         mode = "dry-run" if dry_run else "live"
         print(
             f"Codex credential adapter active ({mode}): provider={credentials.provider}; "
@@ -163,6 +170,8 @@ def _parse_adapter_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--codex-home", type=Path)
     parser.add_argument("--diagnose", action="store_true")
+    parser.add_argument("--verbose-status", action="store_true")
+    parser.add_argument("--verbose-errors", action="store_true")
     options, forwarded = parser.parse_known_args(argv)
     if options.diagnose and forwarded:
         raise AdapterError("--diagnose cannot be combined with Image Gen arguments")
@@ -176,14 +185,28 @@ def run(argv: list[str] | None = None) -> int:
     if options.diagnose:
         return _diagnose(paths, credentials)
 
-    imagegen = _load_bundled_imagegen(paths.imagegen)
-    _patch_credential_delivery(imagegen, credentials)
-    original_argv = sys.argv
     try:
-        sys.argv = [str(paths.imagegen), *forwarded]
-        result = imagegen.main()
-    finally:
-        sys.argv = original_argv
+        imagegen = _load_bundled_imagegen(paths.imagegen)
+        _patch_credential_delivery(
+            imagegen,
+            credentials,
+            verbose_status=options.verbose_status,
+        )
+        original_argv = sys.argv
+        try:
+            sys.argv = [str(paths.imagegen), *forwarded]
+            result = imagegen.main()
+        finally:
+            sys.argv = original_argv
+    except AdapterError:
+        raise
+    except Exception as exc:
+        if options.verbose_errors:
+            raise
+        raise AdapterError(
+            f"Image Gen execution failed ({type(exc).__name__}). "
+            "Retry with --verbose-errors only when a traceback is needed."
+        ) from None
     return int(result or 0)
 
 
