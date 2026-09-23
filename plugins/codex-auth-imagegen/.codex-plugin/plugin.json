@@ -1,7 +1,7 @@
 {
   "name": "codex-auth-imagegen",
-  "version": "1.0.0+codex.20260719145857",
-  "description": "Run the bundled Image Gen CLI with the active Codex provider URL and stored Codex API key, without environment variables.",
+  "version": "1.0.0+codex.20260923202831",
+  "description": "Run Image Gen with the active provider URL and config.toml token, falling back to auth.json when absent.",
   "author": {
     "name": "Mzee"
   },
@@ -17,7 +17,7 @@
   "interface": {
     "displayName": "Codex Auth ImageGen",
     "shortDescription": "Use Codex credentials for Image Gen without environment variables.",
-    "longDescription": "Read the active provider URL from Codex config and the API key from Codex auth storage at call time, then pass both directly to the bundled Image Gen clients in memory.",
+    "longDescription": "Read the active provider base_url from config.toml and prefer its experimental_bearer_token; fall back to auth.json only when no provider token is configured. Pass the selected key directly to bundled Image Gen clients in memory.",
     "developerName": "Mzee",
     "category": "Creativity",
     "capabilities": [

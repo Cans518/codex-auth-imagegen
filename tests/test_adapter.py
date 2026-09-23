@@ -7,6 +7,7 @@ import io
 import json
 import sys
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
@@ -41,13 +42,17 @@ class AdapterTests(unittest.TestCase):
         self.codex_home = FIXTURE_CODEX_HOME
         self.paths = adapter.CodexPaths.from_home(self.codex_home)
         self.write_config("https://provider.example/v1")
-        self.write_auth("test-secret-value")
+        self.write_auth("fallback-secret-value")
 
-    def write_config(self, base_url: str, provider: str = "custom") -> None:
+    def write_config(
+        self, base_url: str, provider: str = "custom", key: str | None = "test-secret-value"
+    ) -> None:
+        token_line = "" if key is None else f'experimental_bearer_token = "{key}"\n'
         self.paths.config.write_text(
             f'model_provider = "{provider}"\n\n'
             f'[model_providers.{provider}]\n'
-            f'base_url = "{base_url}"\n',
+            f'base_url = "{base_url}"\n'
+            f'{token_line}',
             encoding="utf-8",
         )
 
@@ -60,7 +65,9 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(credentials.provider, "custom")
         self.assertEqual(credentials.base_url, "https://provider.example/v1")
         self.assertEqual(credentials.api_key, "test-secret-value")
+        self.assertEqual(credentials.key_source, "config.toml")
         self.assertNotIn("test-secret-value", repr(credentials))
+        self.assertNotIn("fallback-secret-value", repr(credentials))
 
     def test_rejects_plain_http_for_remote_provider(self) -> None:
         self.write_config("http://provider.example/v1")
@@ -77,10 +84,66 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(adapter.AdapterError, "must not be embedded"):
             adapter.load_codex_credentials(self.paths)
 
-    def test_rejects_missing_key(self) -> None:
-        self.write_auth(None)
-        with self.assertRaisesRegex(adapter.AdapterError, "OPENAI_API_KEY"):
+    def test_rejects_url_query_that_may_expose_key(self) -> None:
+        self.write_config("https://provider.example/v1?key=secret")
+        with self.assertRaisesRegex(adapter.AdapterError, "query or fragment"):
             adapter.load_codex_credentials(self.paths)
+
+    def test_falls_back_to_auth_json_when_config_token_missing(self) -> None:
+        self.write_config("https://provider.example/v1", key=None)
+        credentials = adapter.load_codex_credentials(self.paths)
+        self.assertEqual(credentials.api_key, "fallback-secret-value")
+        self.assertEqual(credentials.key_source, "auth.json")
+
+    def test_falls_back_to_auth_json_when_config_token_blank(self) -> None:
+        self.write_config("https://provider.example/v1", key="   ")
+        credentials = adapter.load_codex_credentials(self.paths)
+        self.assertEqual(credentials.api_key, "fallback-secret-value")
+        self.assertEqual(credentials.key_source, "auth.json")
+
+    def test_rejects_missing_both_keys(self) -> None:
+        self.write_config("https://provider.example/v1", key=None)
+        self.write_auth(None)
+        with self.assertRaisesRegex(adapter.AdapterError, "OPENAI_API_KEY in auth.json"):
+            adapter.load_codex_credentials(self.paths)
+
+    def test_missing_auth_file_is_ignored_when_config_token_is_set(self) -> None:
+        missing_auth = replace(self.paths, auth=self.codex_home / "missing-auth.json")
+        credentials = adapter.load_codex_credentials(missing_auth)
+        self.assertEqual(credentials.key_source, "config.toml")
+
+    def test_missing_auth_file_is_reported_when_config_token_is_absent(self) -> None:
+        self.write_config("https://provider.example/v1", key=None)
+        missing_auth = replace(self.paths, auth=self.codex_home / "missing-auth.json")
+        with self.assertRaisesRegex(adapter.AdapterError, "Codex credential file not found"):
+            adapter.load_codex_credentials(missing_auth)
+
+    def test_malformed_auth_file_is_ignored_when_config_token_is_set(self) -> None:
+        self.paths.auth.write_text("not json", encoding="utf-8")
+        credentials = adapter.load_codex_credentials(self.paths)
+        self.assertEqual(credentials.key_source, "config.toml")
+
+    def test_malformed_auth_file_is_reported_for_fallback(self) -> None:
+        self.write_config("https://provider.example/v1", key=None)
+        self.paths.auth.write_text("not json", encoding="utf-8")
+        with self.assertRaisesRegex(adapter.AdapterError, "Unable to read Codex credential file"):
+            adapter.load_codex_credentials(self.paths)
+
+    def test_rejects_invalid_config_token_without_fallback(self) -> None:
+        self.write_config("https://provider.example/v1")
+        self.paths.config.write_text(
+            self.paths.config.read_text(encoding="utf-8").replace(
+                'experimental_bearer_token = "test-secret-value"',
+                "experimental_bearer_token = 123",
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(adapter.AdapterError, "experimental_bearer_token"):
+            adapter.load_codex_credentials(self.paths)
+
+    def test_does_not_read_auth_json_when_config_token_present(self) -> None:
+        self.paths.auth.write_text("not json", encoding="utf-8")
+        self.assertEqual(adapter.load_codex_credentials(self.paths).api_key, "test-secret-value")
 
     def test_patches_clients_with_explicit_arguments_and_is_quiet_by_default(self) -> None:
         calls: list[tuple[str, dict[str, str]]] = []
@@ -123,7 +186,7 @@ class AdapterTests(unittest.TestCase):
         with contextlib.redirect_stderr(stderr):
             imagegen._ensure_api_key(False)
         output = stderr.getvalue()
-        self.assertIn("key_source=auth.json (redacted)", output)
+        self.assertIn("key_source=config.toml (redacted)", output)
         self.assertNotIn("test-secret-value", output)
 
     def test_diagnose_is_redacted(self) -> None:
@@ -135,7 +198,74 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("uses_environment_variables=false", output)
         self.assertIn("api_key_present=true", output)
+        self.assertIn("api_key_source=config.toml", output)
         self.assertNotIn("test-secret-value", output)
+        self.assertNotIn("fallback-secret-value", output)
+
+    def test_fallback_diagnostics_redact_auth_key(self) -> None:
+        self.write_config("https://provider.example/v1", key=None)
+        credentials = adapter.load_codex_credentials(self.paths)
+        imagegen = SimpleNamespace()
+        adapter._patch_credential_delivery(imagegen, credentials, verbose_status=True)
+        stderr = io.StringIO()
+        stdout = io.StringIO()
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+            imagegen._ensure_api_key(False)
+            adapter._diagnose(self.paths, credentials)
+        self.assertIn("key_source=auth.json (redacted)", stderr.getvalue())
+        self.assertIn("api_key_source=auth.json", stdout.getvalue())
+        self.assertNotIn("fallback-secret-value", stderr.getvalue() + stdout.getvalue())
+
+    def test_lists_only_image_models_without_exposing_key(self) -> None:
+        captured = {}
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            class models:
+                @staticmethod
+                def list():
+                    return SimpleNamespace(data=[
+                        SimpleNamespace(id="gpt-image-2.5-sunburst"),
+                        SimpleNamespace(id="text-model"),
+                        SimpleNamespace(id="gpt-image-2.5-flare"),
+                    ])
+
+        fake_openai = ModuleType("openai")
+        fake_openai.OpenAI = FakeClient
+        stdout = io.StringIO()
+        with patch.dict(sys.modules, {"openai": fake_openai}), contextlib.redirect_stdout(stdout):
+            result = adapter._list_image_models(adapter.load_codex_credentials(self.paths))
+        self.assertEqual(result, 0)
+        self.assertEqual(stdout.getvalue().splitlines(), [
+            "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+        ])
+        self.assertNotIn(captured["api_key"], stdout.getvalue())
+
+    def test_image_25_defaults_respect_explicit_model(self) -> None:
+        self.assertEqual(
+            adapter._with_default_model(["generate", "--prompt", "test"]),
+            ["generate", "--model", "gpt-image-2.5-flare", "--prompt", "test"],
+        )
+        self.assertEqual(
+            adapter._with_default_model(["edit", "--image", "robot.png"]),
+            ["edit", "--model", "gpt-image-2.5-sunburst", "--image", "robot.png"],
+        )
+        self.assertEqual(
+            adapter._with_default_model(["generate", "--model", "gpt-image-2", "--prompt", "test"]),
+            ["generate", "--model", "gpt-image-2", "--prompt", "test"],
+        )
+        self.assertEqual(
+            adapter._with_default_model(["generate-batch", "--input", "jobs.jsonl"]),
+            ["generate-batch", "--input", "jobs.jsonl"],
+        )
 
     def test_adapter_options_are_removed_before_forwarding(self) -> None:
         options, forwarded = adapter._parse_adapter_args(

@@ -1,12 +1,26 @@
 ---
 name: codex-auth-imagegen
-description: Run Codex's bundled Image Gen CLI with the active provider URL from config.toml and OPENAI_API_KEY from auth.json, passed directly to OpenAI clients without environment variables. Use when the user requests image generation, editing, or batch generation through their configured Codex provider; requests a non-environment-variable Image Gen credential adapter; or needs a redacted diagnosis of that adapter.
+description: Run Codex's bundled Image Gen CLI with the active provider base_url and preferred experimental_bearer_token from config.toml, falling back to OPENAI_API_KEY in auth.json when absent. Use for image generation, editing, batch generation through the configured provider, or redacted adapter diagnosis.
 ---
 
 # Codex Auth ImageGen
 
 Use this plugin only to change how the bundled Image Gen CLI receives credentials. Preserve the
 system `imagegen` skill's prompt, model, transparency, output, and validation rules.
+
+## Image 2.5
+
+The official Image Generation guide documents `gpt-image-2.5-sunburst` for
+precision-oriented image edits and `gpt-image-2.5-flare` for faster everyday
+generation. For an explicitly requested Image 2.5 call, pass one of these
+exact IDs with `--model`; do not use `gpt-image-2.5` as an assumed alias.
+The adapter defaults `generate` to Flare and `edit` to Sunburst, overriding
+the bundled CLI's older default without editing its files. An explicit
+`--model` always wins; batch jobs retain their own model selection. Do not
+silently fall back if the configured provider rejects that model. Before assuming a third-party
+provider offers a model, use `--list-image-models` only when the user
+authorizes sending their key to that provider. A model listing is not a
+guarantee of generation access; report the result of a real call separately.
 
 ## Quiet fast path
 
@@ -79,6 +93,10 @@ python <plugin-root>/scripts/codex_config_imagegen.py \
 ```
 
 Run `--diagnose` for a local, redacted check. Do not make a network call during diagnosis.
+Run `--list-image-models` only for an explicitly requested availability
+check: it calls the active provider's models endpoint and prints image model
+IDs, without printing the key. Confirm provider trust before sending any
+credential to a custom provider.
 
 Diagnostic verbosity is adapter-only and must precede the Image Gen arguments:
 
@@ -94,9 +112,12 @@ python <plugin-root>/scripts/codex_config_imagegen.py \
 - Never place credentials in command arguments, prompts, JSONL files, logs, or generated assets.
 - Never modify the bundled system `image_gen.py`. Let the adapter patch only its credential-check
   and client-construction functions in the current process.
-- Read only the active `model_provider`, its `base_url`, and `OPENAI_API_KEY` from the standard Codex
-  files. Reject missing providers, missing keys, embedded URL credentials, and unsafe non-HTTPS
-  remote URLs.
+- Read the active `model_provider` and `base_url` from `config.toml`. Prefer its
+  `experimental_bearer_token` when nonblank; only then skip `auth.json`. If the
+  provider token is absent or blank, read the top-level `OPENAI_API_KEY` in
+  `auth.json`. Reject malformed configured tokens, missing keys, embedded URL
+  credentials, query strings, and unsafe non-HTTPS remote URLs. Do not retry
+  an API failure with the other credential source.
 - Treat every configured provider as a separate trust decision. This plugin does not suppress Codex
   network approvals or tenant policy. If a call is blocked, report it and do not work around it.
 - Keep final assets directly under the current workspace's `output/` directory unless the user
@@ -106,6 +127,10 @@ python <plugin-root>/scripts/codex_config_imagegen.py \
 
 - URL: `<codex-home>/config.toml` -> `model_provider` ->
   `model_providers.<active-provider>.base_url`
-- Key: `<codex-home>/auth.json` -> `OPENAI_API_KEY`
+- Preferred key: `<codex-home>/config.toml` ->
+  `model_providers.<active-provider>.experimental_bearer_token`
+- Fallback key: `<codex-home>/auth.json` -> `OPENAI_API_KEY` (only when the
+  preferred key is absent or blank)
 
-Re-read both files for every adapter process so configuration changes apply on the next call.
+Re-read `config.toml` for every adapter process and `auth.json` only if
+needed. Diagnostics show the chosen source, never the key.
