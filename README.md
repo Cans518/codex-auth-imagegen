@@ -18,9 +18,10 @@ config.toml ── active provider base_url + preferred experimental_bearer_toke
 auth.json ───── fallback OPENAI_API_KEY (only if config token is absent/blank) ─┴─> adapter ─> Image Gen CLI
 ```
 
-The adapter dynamically loads the bundled CLI and replaces only its credential check and client
-constructors for the current process. Generation, editing, batching, model validation, prompt
-augmentation, and output handling remain owned by the bundled Image Gen CLI.
+The adapter dynamically loads the bundled CLI and replaces its credential check and client
+constructors for the current process. It also routes Image 2.5 size validation through the
+bundled Image 2 validator, preserving the requested model and dimensions. Generation, editing,
+batching, prompt augmentation, and output handling remain owned by the bundled Image Gen CLI.
 
 ## Requirements
 
@@ -102,6 +103,28 @@ to generate images. The adapter does not silently switch models.
 Do not use diagnosis or `--help` as a preflight for routine generation. The normal adapter path is
 quiet and reads the current configuration on every call.
 
+### Fixed dimensions for Image 2.5
+
+Use `--size WIDTHxHEIGHT` with Flare or Sunburst, for example:
+
+```powershell
+python plugins/codex-auth-imagegen/scripts/codex_config_imagegen.py generate `
+  --prompt "A quiet alpine lake at dawn" `
+  --size 1536x864 `
+  --out output/alpine-lake.png
+```
+
+The default remains `auto`. Explicit dimensions must be multiples of 16,
+with an aspect ratio no greater than 3:1, a maximum edge of 3840 pixels, and
+655,360 to 8,294,400 total pixels. `1536x864` and `2048x1152` are valid 16:9
+sizes; `1920x1080` is rejected because 1080 is not a multiple of 16.
+Editing uses the same option; batch entries can each set their own `size`.
+
+The adapter reuses the bundled validator only in memory and forwards the
+original model and size unchanged. Other models keep their existing validation.
+A third-party provider may still reject a locally valid size; the adapter
+does not silently resize images or switch models.
+
 ## Direct CLI use
 
 All unrecognized arguments are forwarded to the bundled Image Gen CLI:
@@ -172,6 +195,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution rules.
 
 插件不会绕过 Codex 的联网审批或租户安全策略。第三方 provider 是否可信仍需由使用者和
 所在组织单独判断。
+
+Image 2.5 的 Flare 和 Sunburst 支持通过 `--size 1536x864` 等参数指定固定尺寸，
+默认仍为 `auto`。宽高均须为 16 的倍数，长宽比不超过 3:1，单边不超过 3840，
+总像素数在 655,360～8,294,400 之间。适配器仅在进程内复用系统 CLI 的 Image 2
+尺寸校验，并将模型名和尺寸原样传给后端；第三方后端是否接受该尺寸仍取决于其实现。
 
 ## License
 

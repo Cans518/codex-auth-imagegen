@@ -284,6 +284,86 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(options.verbose_errors)
         self.assertEqual(forwarded, ["generate", "--prompt", "test"])
 
+    def test_image_25_reuses_bundled_image_2_size_validation(self) -> None:
+        for model in adapter.DEFAULT_IMAGE_MODELS.values():
+            with self.subTest(model=model):
+                validate = Mock()
+                imagegen = SimpleNamespace(_validate_size=validate)
+                adapter._patch_image_25_size_validation(imagegen)
+                imagegen._validate_size("1536x864", model)
+                validate.assert_called_once_with("1536x864", "gpt-image-2")
+
+    def test_other_models_keep_original_size_validation(self) -> None:
+        for model in ("gpt-image-2", "gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"):
+            with self.subTest(model=model):
+                validate = Mock()
+                imagegen = SimpleNamespace(_validate_size=validate)
+                adapter._patch_image_25_size_validation(imagegen)
+                imagegen._validate_size("1024x1024", model)
+                validate.assert_called_once_with("1024x1024", model)
+
+    def test_image_25_propagates_invalid_size_errors(self) -> None:
+        for model in adapter.DEFAULT_IMAGE_MODELS.values():
+            with self.subTest(model=model):
+                validate = Mock(side_effect=SystemExit(1))
+                imagegen = SimpleNamespace(_validate_size=validate)
+                adapter._patch_image_25_size_validation(imagegen)
+                with self.assertRaises(SystemExit):
+                    imagegen._validate_size("1920x1080", model)
+                validate.assert_called_once_with("1920x1080", "gpt-image-2")
+
+    def test_fixed_size_and_model_are_forwarded_unchanged(self) -> None:
+        cases = [
+            ("generate", [], [], "gpt-image-2.5-flare", "1536x864"),
+            ("edit", ["--image", "fixture.png"], [], "gpt-image-2.5-sunburst", "2048x1152"),
+            ("generate", [], ["--model=gpt-image-2.5-sunburst"],
+             "gpt-image-2.5-sunburst", "1536x864"),
+        ]
+        for command, inputs, model_args, model, size in cases:
+            with self.subTest(command=command, model=model):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    result = adapter.run([
+                        "--codex-home", str(self.codex_home), command,
+                        *inputs, *model_args, "--prompt", "test",
+                        f"--size={size}", "--dry-run",
+                    ])
+                payload = json.loads(stdout.getvalue().splitlines()[0])
+                self.assertEqual(result, 0)
+                self.assertEqual(payload["model"], model)
+                self.assertEqual(payload["size"], size)
+                self.assertEqual(payload["validations"], [[size, "gpt-image-2"]])
+
+    def test_default_size_remains_auto(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            adapter.run([
+                "--codex-home", str(self.codex_home),
+                "generate", "--prompt", "test", "--dry-run",
+            ])
+        payload = json.loads(stdout.getvalue().splitlines()[0])
+        self.assertEqual(payload["size"], "auto")
+        self.assertEqual(payload["model"], "gpt-image-2.5-flare")
+
+    def test_mixed_models_validate_without_changing_payloads(self) -> None:
+        validate = Mock()
+        imagegen = SimpleNamespace(_validate_size=validate)
+        adapter._patch_image_25_size_validation(imagegen)
+        jobs = [
+            {"model": "gpt-image-2.5-flare", "size": "1536x864"},
+            {"model": "gpt-image-2.5-sunburst", "size": "2048x1152"},
+            {"model": "gpt-image-1", "size": "1024x1024"},
+        ]
+        original_jobs = [job.copy() for job in jobs]
+        for job in jobs:
+            imagegen._validate_size(job["size"], job["model"])
+        self.assertEqual(jobs, original_jobs)
+        self.assertEqual(
+            [call.args for call in validate.call_args_list],
+            [("1536x864", "gpt-image-2"), ("2048x1152", "gpt-image-2"),
+             ("1024x1024", "gpt-image-1")],
+        )
+
     def test_diagnose_rejects_forwarded_arguments(self) -> None:
         with self.assertRaisesRegex(adapter.AdapterError, "cannot be combined"):
             adapter._parse_adapter_args(["--diagnose", "generate"])
@@ -300,7 +380,9 @@ class AdapterTests(unittest.TestCase):
         self.assertNotIn("test-secret-value", stdout.getvalue() + stderr.getvalue())
 
     def test_execution_error_is_concise_by_default(self) -> None:
-        fake_imagegen = SimpleNamespace(main=Mock(side_effect=RuntimeError("details")))
+        fake_imagegen = SimpleNamespace(
+            _validate_size=Mock(), main=Mock(side_effect=RuntimeError("details"))
+        )
         with patch.object(adapter, "_load_bundled_imagegen", return_value=fake_imagegen):
             with self.assertRaisesRegex(
                 adapter.AdapterError,
@@ -310,7 +392,9 @@ class AdapterTests(unittest.TestCase):
         self.assertNotIn("details", str(caught.exception))
 
     def test_main_prints_one_safe_error_line_without_traceback(self) -> None:
-        fake_imagegen = SimpleNamespace(main=Mock(side_effect=RuntimeError("details")))
+        fake_imagegen = SimpleNamespace(
+            _validate_size=Mock(), main=Mock(side_effect=RuntimeError("details"))
+        )
         stderr = io.StringIO()
         argv = [
             str(ADAPTER_PATH),
@@ -335,7 +419,9 @@ class AdapterTests(unittest.TestCase):
         self.assertNotIn("Traceback", lines[0])
 
     def test_verbose_errors_preserves_original_exception(self) -> None:
-        fake_imagegen = SimpleNamespace(main=Mock(side_effect=RuntimeError("details")))
+        fake_imagegen = SimpleNamespace(
+            _validate_size=Mock(), main=Mock(side_effect=RuntimeError("details"))
+        )
         with patch.object(adapter, "_load_bundled_imagegen", return_value=fake_imagegen):
             with self.assertRaisesRegex(RuntimeError, "details"):
                 adapter.run(

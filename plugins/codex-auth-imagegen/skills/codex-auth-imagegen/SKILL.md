@@ -5,8 +5,9 @@ description: Run Codex's bundled Image Gen CLI with the active provider base_url
 
 # Codex Auth ImageGen
 
-Use this plugin only to change how the bundled Image Gen CLI receives credentials. Preserve the
-system `imagegen` skill's prompt, model, transparency, output, and validation rules.
+Use this plugin to deliver Codex credentials to the bundled Image Gen CLI and
+apply the Image 2 size validator to Image 2.5 models in memory. Preserve the
+system `imagegen` skill's prompt, transparency, and output rules.
 
 ## Image 2.5
 
@@ -21,6 +22,20 @@ silently fall back if the configured provider rejects that model. Before assumin
 provider offers a model, use `--list-image-models` only when the user
 authorizes sending their key to that provider. A model listing is not a
 guarantee of generation access; report the result of a real call separately.
+
+### Fixed image dimensions
+
+Pass `--size WIDTHxHEIGHT` for a fixed generation or edit size, for example
+`--size 1536x864`. The default remains `auto`; an explicit size is forwarded
+unchanged to the provider. Batch jobs can specify their own `size`.
+
+For Flare and Sunburst, the adapter applies the bundled Image 2 size validator
+in memory: both dimensions must be multiples of 16, the maximum edge is 3840,
+the aspect ratio must not exceed 3:1, and the total pixel count must be between
+655,360 and 8,294,400 inclusive. Other models retain their existing validation.
+Local validation does not guarantee that a third-party provider accepts the
+requested dimensions. Report a provider rejection without silently resizing
+or switching models.
 
 ## Quiet fast path
 
@@ -110,8 +125,8 @@ python <plugin-root>/scripts/codex_config_imagegen.py \
 
 - Never set, export, persist, echo, or print `OPENAI_API_KEY` or `OPENAI_BASE_URL`.
 - Never place credentials in command arguments, prompts, JSONL files, logs, or generated assets.
-- Never modify the bundled system `image_gen.py`. Let the adapter patch only its credential-check
-  and client-construction functions in the current process.
+- Never modify the bundled system `image_gen.py`. The adapter patches credential-check,
+  client-construction, and Image 2.5 size-validation functions only in the current process.
 - Read the active `model_provider` and `base_url` from `config.toml`. Prefer its
   `experimental_bearer_token` when nonblank; only then skip `auth.json`. If the
   provider token is absent or blank, read the top-level `OPENAI_API_KEY` in

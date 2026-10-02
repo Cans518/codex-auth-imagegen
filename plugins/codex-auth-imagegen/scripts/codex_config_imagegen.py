@@ -212,6 +212,19 @@ def _with_default_model(forwarded: list[str]) -> list[str]:
     return [forwarded[0], "--model", DEFAULT_IMAGE_MODELS[forwarded[0]], *forwarded[1:]]
 
 
+def _patch_image_25_size_validation(imagegen: ModuleType) -> None:
+    original_validate_size = imagegen._validate_size
+
+    def validate_size(size: str, model: str) -> None:
+        # Image 2.5 shares Image 2's size limits; preserve the requested model.
+        validation_model = (
+            "gpt-image-2" if model in DEFAULT_IMAGE_MODELS.values() else model
+        )
+        original_validate_size(size, validation_model)
+
+    imagegen._validate_size = validate_size
+
+
 def _parse_adapter_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--codex-home", type=Path)
@@ -248,6 +261,7 @@ def run(argv: list[str] | None = None) -> int:
 
     try:
         imagegen = _load_bundled_imagegen(paths.imagegen)
+        _patch_image_25_size_validation(imagegen)
         _patch_credential_delivery(
             imagegen,
             credentials,

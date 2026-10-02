@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+- Support fixed Image 2.5 dimensions by reusing the bundled Image 2 size validator in memory.
+- Preserve explicit dimensions and model IDs for generation, editing, and per-job batch validation;
+  keep `auto` as the default and retain existing validation for other models.
+- Add size-validation and argument-forwarding regression tests.
+
 - Add a quiet fast path that avoids unnecessary reference, help, diagnosis, and provider probes.
 - Keep adapter credential status silent unless `--verbose-status` is requested.
 - Collapse unexpected execution failures to a safe one-line error unless `--verbose-errors` is
